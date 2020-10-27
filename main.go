@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"strconv"
 
 	"github.com/buger/jsonparser"
 	"github.com/hashicorp/go-version"
@@ -46,38 +47,67 @@ func tags(image string) ([]string, error) {
 	log.Debug("Getting raw tag information on dockerhub for image: '" + image + "'")
 
 	// get url
-	resp, err := http.Get("https://registry.hub.docker.com/v2/repositories/" + image + "/tags?page_size=1024")
+	resp, err := http.Get("https://registry.hub.docker.com/v2/repositories/" + image + "/tags")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	// read body into bytes
-	var b []byte
+	var a []byte
 	if resp.StatusCode == http.StatusOK {
 		log.Debug("Dockerhub api call Ok. Reading body as []byte")
-		b, err = ioutil.ReadAll(resp.Body)
+		a, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	// get tags and return them as a slice
-	// var c string
 	var arr []string
-	_, err = jsonparser.ArrayEach(b, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
+	var count int64
+	if value, err := jsonparser.GetInt(a, "count"); err == nil {
+		// devide by max of results on 1 page and add 1 extra page to be sure all pages are acounted for
+		count = value/100 + 1
+	}
+	log.Debug("Amount of pages are: ", count)
 
-		key := "name"
+	var page int64
+	for page = 1; page <= count ; page++ {
 
-		s, _ := jsonparser.GetString(value, key)
-		if s == "" {
-			log.Warning("No value retrieved for key: '" + key + "'")
+		pagestr := strconv.FormatInt(page, 10)
+		url := "https://registry.hub.docker.com/v2/repositories/" + image + "/tags?page=" + pagestr + "&page_size=100"
+		log.Debug("Querying url: " + url)
+		resp, err := http.Get(url)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		// read body into bytes
+		var b []byte
+		if resp.StatusCode == http.StatusOK {
+			log.Debug("Dockerhub api call Ok. Reading body as []byte")
+			b, err = ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return nil, err
+			}
 		}
 
-		arr = append(arr, s)
-		log.Debug(arr)
+		// get tags and return them as a slice
+		// var c string
+		_, err = jsonparser.ArrayEach(b, func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
 
-	}, "results")
+			key := "name"
+
+			s, _ := jsonparser.GetString(value, key)
+			if s == "" {
+				log.Warning("No value retrieved for key: '" + key + "'")
+			}
+
+			arr = append(arr, s)
+
+		}, "results")
+	}
+	log.Debug(arr)
 
 	if err != nil {
 		return nil, err
